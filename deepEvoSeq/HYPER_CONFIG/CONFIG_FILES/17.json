@@ -1,0 +1,8 @@
+{
+    "nb_evoformer_layers": 1,
+    "subst_rate_loss_pos_weight": 0.1,
+    "activation": "ReLU",
+    "norm": "Batch",
+    "intern_dim_1": 128,
+    "intern_dim_2": 128
+}

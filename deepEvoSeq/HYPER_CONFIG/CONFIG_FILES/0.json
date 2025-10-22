@@ -1,0 +1,8 @@
+{
+    "nb_evoformer_layers": 2,
+    "subst_rate_loss_pos_weight": 1.0,
+    "activation": "ReLU",
+    "norm": "None",
+    "intern_dim_1": 128,
+    "intern_dim_2": 64
+}

@@ -1,0 +1,11 @@
+SeqHead(
+  (activ): ReLU()
+  (linear_1): Linear(in_features=256, out_features=256, bias=True)
+  (linear_2): Linear(in_features=256, out_features=256, bias=True)
+  (linear_3): Linear(in_features=256, out_features=128, bias=True)
+  (linear_4): Linear(in_features=128, out_features=128, bias=True)
+  (linear_5): Linear(in_features=128, out_features=1, bias=True)
+  (linear_6): Linear(in_features=202, out_features=134, bias=True)
+  (linear_7): Linear(in_features=134, out_features=134, bias=True)
+  (linear_8): Linear(in_features=134, out_features=22, bias=True)
+)

@@ -1,0 +1,9 @@
+{
+    "nb_evoformer_layers": 2,
+    "subst_rate_loss_pos_weight": 5,
+    "activation": "GELU",
+    "norm": "None",
+    "intern_dim_1": 128,
+    "intern_dim_2": 128,
+    "dropout": 0.2
+}
