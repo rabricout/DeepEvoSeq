@@ -1,0 +1,7 @@
+import numpy as np
+import json
+
+nb_evoformer_layers = [1,2,3,4]
+
+for x in itertools.product(nb_evoformer_layers, nb_evoformer_layers):
+    print(x)

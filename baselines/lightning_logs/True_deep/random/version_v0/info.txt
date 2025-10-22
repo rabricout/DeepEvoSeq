@@ -1,0 +1,2 @@
+nature_only: True
+strat: deep

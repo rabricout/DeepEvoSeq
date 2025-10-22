@@ -1,0 +1,20 @@
+blocks_per_ckpt: 1
+c_hidden_msa_att: 32
+c_hidden_mul: 128
+c_hidden_opm: 32
+c_hidden_pair_att: 32
+c_m: 256
+c_s: 384
+c_z: 128
+clear_cache_between_blocks: false
+eps: 1.0e-08
+inf: 1000000000.0
+msa_dropout: 0.15
+no_blocks: 4
+no_heads_msa: 8
+no_heads_pair: 4
+pair_dropout: 0.25
+transition_n: 4
+tune_chunk_size: true
+{
+}

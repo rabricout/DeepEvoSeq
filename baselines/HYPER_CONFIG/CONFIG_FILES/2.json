@@ -1,0 +1,8 @@
+{
+    "nb_evoformer_layers": 1,
+    "subst_rate_loss_pos_weight": 0.1,
+    "activation": "GELU",
+    "norm": "None",
+    "intern_dim_1": 64,
+    "intern_dim_2": 32
+}
