@@ -1,0 +1,90 @@
+from Bio.Seq import Seq
+from Bio.SeqRecord import SeqRecord
+from Bio.Align import MultipleSeqAlignment
+from Bio import SeqIO
+import subprocess
+from io import StringIO
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.autograd import Variable
+
+
+def my_align_seqs(seqs):
+    seq_str = ''
+    for i, seq in enumerate(seqs):
+        seq_str += '>' + seq.description + '\n'
+        seq_str += str(seq.seq) + '\n'
+    child = subprocess.Popen(['mafft', '--anysymbol', '--quiet', '-'], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    child.stdin.write(seq_str.encode())
+    child_out = child.communicate()[0].decode('utf8')
+    seq_ali = list(SeqIO.parse(StringIO(child_out), 'fasta'))
+    child.stdin.close()
+    return seq_ali
+
+
+class FocalLoss(nn.Module):
+    def __init__(self, gamma=0, alpha=None, size_average=True):
+        super(FocalLoss, self).__init__()
+        self.gamma = gamma
+        self.alpha = alpha
+        if isinstance(alpha,(float,int,int)):
+            self.alpha = torch.Tensor([alpha,1-alpha])
+        if isinstance(alpha,list):
+            self.alpha = torch.Tensor(alpha)
+        self.size_average = size_average
+
+    def forward(self, input, target):
+        if input.dim()>2:
+            input = input.view(input.size(0),input.size(1),-1)  # N,C,H,W => N,C,H*W
+            input = input.transpose(1,2)    # N,C,H*W => N,H*W,C
+            input = input.contiguous().view(-1,input.size(2))   # N,H*W,C => N*H*W,C
+        target = target.view(-1,1)
+
+        logpt = F.log_softmax(input, dim=-1)
+        logpt = logpt.gather(1,target)
+        logpt = logpt.view(-1)
+        pt = Variable(logpt.data.exp())
+
+        if self.alpha is not None:
+            if self.alpha.type()!=input.data.type():
+                self.alpha = self.alpha.type_as(input.data)
+            at = self.alpha.gather(0,target.data.view(-1))
+            logpt = logpt * Variable(at)
+
+        loss = -1 * (1-pt)**self.gamma * logpt
+        if self.size_average:
+            return loss.mean()
+        else:
+            return loss.sum()
+
+
+
+def f1(y_true, y_pred):
+    y_pred = torch.round(y_pred)
+    tp = torch.sum((y_true * y_pred).float(), dim=0)
+    tn = torch.sum(((1 - y_true) * (1 - y_pred)).float(), dim=0)
+    fp = torch.sum(((1 - y_true) * y_pred).float(), dim=0)
+    fn = torch.sum((y_true * (1 - y_pred)).float(), dim=0)
+
+    p = tp / (tp + fp + 1e-7)
+    r = tp / (tp + fn + 1e-7)
+
+    f1 = 2 * p * r / (p + r + 1e-7)
+    f1 = torch.where(torch.isnan(f1), torch.zeros_like(f1), f1)
+    return torch.mean(f1)
+
+def f1_loss(y_true, y_pred):
+    tp = torch.sum((y_true * y_pred).float(), dim=0)
+    tn = torch.sum(((1 - y_true) * (1 - y_pred)).float(), dim=0)
+    fp = torch.sum(((1 - y_true) * y_pred).float(), dim=0)
+    fn = torch.sum((y_true * (1 - y_pred)).float(), dim=0)
+    
+    #p = tp / (tp + fp + 1e-7)
+    #r = tp / (tp + fn + 1e-7)
+
+    #f1 = 2 * p * r / (p + r + 1e-7)
+    #f1 = torch.where(torch.isnan(f1), torch.zeros_like(f1), f1)
+    f1 = 2 * tp / (2*tp+fp+fn+1e-7)
+    return 1 - torch.mean(f1)

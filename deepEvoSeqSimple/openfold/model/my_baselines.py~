@@ -1,0 +1,275 @@
+# C'est notre tête de réseau qui remplace le structure block
+# TODO : enlever plein de choses et mettre quelques couches simples à la place. S'inspirer plutôt de la parti RSA de l'evoformer pour ça. 
+
+import time
+import math
+import sys
+import torch
+import torch.nn as nn
+import numpy as np
+from openfold.model.primitives import Linear, LayerNorm
+import openfold.np.residue_constants as residue_constants
+
+import random
+# To get closest seq
+from difflib import get_close_matches
+# To get blosum matrix
+import openfold.utils.my_functions as my_functions
+
+
+class BaselinesModule(nn.Module):
+    def __init__(self, c_m, msa_dim, strat):
+        super(BaselinesModule, self).__init__()
+        self.strat = strat
+        self.blosum_argmaxs = my_functions.blosum62_argmaxs()
+        self.blosum_dict, self.blosum_subst, self.blosum_diag_norm = my_functions.blosum62_freq()
+        
+                
+    def forward(self, target_feat: torch.Tensor, aatype: torch.Tensor, msa_feat: torch.Tensor, anchor_seq: torch.Tensor, residue_index: torch.Tensor, residue_index_rev: torch.Tensor, mask_substitutions: torch.Tensor, nature_only, proxy_subst_rate) -> torch.Tensor:
+        msa = msa_feat[:, :, :, :22]
+        input()
+        #aa_to_id_dict = residue_constants.ID_TO_HHBLITS_AA
+        #inv_dict = residue_constants.HHBLITS_AA_TO_ID
+        #anchor_str = ''.join([aa_to_id_dict[i.item()] for i in anchor_seq])
+        #input_str = ''.join([aa_to_id_dict[i.item()] for i in aatype[0]])
+        msa_seqs = []
+
+        for s in range(msa.size()[1]):
+            msa_seq = [aa_to_id_dict[torch.argmax(i).item()] if torch.max(i)>0 else '-' for i in msa[0,s]]
+            msa_seq = ''.join(msa_seq)
+            msa_seqs.append(msa_seq)
+        # use anchor_seq and msa_seqs (these are strings) for custom predictions
+        
+        m_len = len(anchor_str)
+        m_len_no_indels = len(anchor_str.replace('-', ''))
+        subst_rates = []
+        maj_substs = []
+        maj_aa = []
+        for p in range(m_len):
+            msa_p = ''.join([s[p] for s in msa_seqs]) # it might be full of indels (-)
+            maj_aa_tmp = max(msa_p, key=lambda x: msa_p.count(x))
+            maj_aa.append(maj_aa_tmp)
+            local_subst = msa_p.replace(anchor_str[p], '')
+            subst_rate = len(local_subst) / m_len
+            subst_rates.append(subst_rate)
+            if len(local_subst) > 0:
+                maj_subst = max(local_subst, key=lambda x: local_subst.count(x))
+            else:
+                maj_subst = '-'
+            maj_substs.append(maj_subst)
+        
+        indexes = list(range(m_len))
+        subst_rates_s, maj_substs_s, indexes_s = (list(t) for t in zip(*sorted(zip(subst_rates, maj_substs, indexes), reverse=True)))
+        
+        prediction = nn.functional.one_hot(anchor_seq, num_classes=23)
+        prediction = prediction[None, :]
+
+        zeros = torch.zeros(1, m_len, 1)
+        ones  = torch.ones(1, m_len, 1)
+        position_prediction = torch.cat((ones, zeros), -1).to(prediction.device)
+
+        subst_pos = []
+        for i in range(len(mask_substitutions[0])):
+            if mask_substitutions[0,i] == 1:
+                subst_pos.append(i)
+        strat = self.strat
+        if nature_only:
+            strats = ['most_subst', 'most_subst_randomized', 'blosum_freqs', 'blosum_argmax']
+            if strat not in strats:
+                print("ATTENTION, LA STRATEGIE N'EST PAS BONNE")
+            if strat == 'most_subst':
+                for i in subst_pos:
+                    if anchor_str[i] != '-':
+                        t = torch.Tensor([inv_dict[maj_substs[i]]]).long()
+                        hot = nn.functional.one_hot(t, num_classes=23)
+                        prediction[:, i] = hot
+                        position_prediction[:, i] = torch.tensor([0,1])
+            if strat == 'most_subst_randomized':
+                #c_random = 0
+                for i in subst_pos:
+                    if anchor_str[i] != '-':
+                        if maj_substs[i]=='-':
+                            t = torch.Tensor([np.random.randint(0,21)]).long()
+                            #c_random += 1
+                        else:
+                            t = torch.Tensor([inv_dict[maj_substs[i]]]).long()
+                        hot = nn.functional.one_hot(t, num_classes=23)
+                        prediction[:, i] = hot
+                        position_prediction[:, i] = torch.tensor([0,1])
+                #print('Random positions', c_random, 'over', len(subst_pos))
+            if strat == 'blosum_argmax':
+                for i in subst_pos:
+                    if anchor_str[i] != '-':
+                        new_aa = random.choice(self.blosum_argmaxs[anchor_str[i]])    # choose an aa from the anchor based on blosum substs
+                        t = torch.Tensor([inv_dict[new_aa]]).long()
+                        hot = nn.functional.one_hot(t, num_classes=23)
+                        prediction[:, i] = hot
+                        position_prediction[:, i] = torch.tensor([0,1])
+            if strat == 'blosum_freqs':
+                for i in subst_pos:
+                    if anchor_str[i] != '-':
+                        new_aa = random.choices(list(self.blosum_dict.keys()), weights=self.blosum_subst[self.blosum_dict[anchor_str[i]]])[0]
+                        t = torch.Tensor([inv_dict[new_aa]]).long()
+                        hot = nn.functional.one_hot(t, num_classes=23)
+                        prediction[:, i] = hot
+                        position_prediction[:, i] = torch.tensor([0,1])
+        else:
+            strats = {'closest', 'maj', 'most_subst', 'blosum_argmax', 'blosum_freqs', 'ancestor'}
+            if strat not in strats:
+                print("ATTENTION, LA STRATEGIE N'EST PAS BONNE")
+            # closest and most_subst and maj are not that bad
+
+            if strat == 'blosum_argmax':
+                subst_rate = proxy_subst_rate #0.1
+                for i in range(m_len):
+                    if anchor_str[i] != '-':
+                        if random.random() < subst_rate*self.blosum_diag_norm[self.blosum_dict[anchor_str[i]]]:
+                            new_aa = random.choice(self.blosum_argmaxs[anchor_str[i]])
+                            t = torch.Tensor([inv_dict[new_aa]]).long()
+                            hot = nn.functional.one_hot(t, num_classes=23)
+                            prediction[:, i] = hot
+                            position_prediction[:, i] = torch.tensor([0,1])
+
+            if strat == 'blosum_freqs':
+                subst_rate = proxy_subst_rate #0.1
+                for i in range(m_len):
+                    if anchor_str[i] != '-':
+                        if random.random() < subst_rate*self.blosum_diag_norm[self.blosum_dict[anchor_str[i]]]:
+                            new_aa = random.choices(list(self.blosum_dict.keys()), weights=self.blosum_subst[self.blosum_dict[anchor_str[i]]])[0]
+                            t = torch.Tensor([inv_dict[new_aa]]).long()
+                            hot = nn.functional.one_hot(t, num_classes=23)
+                            prediction[:, i] = hot
+                            position_prediction[:, i] = torch.tensor([0,1])                        
+            
+            if strat == 'closest':    # just copy the closest sequence in the alignment
+                closest_str = get_close_matches(anchor_str, msa_seqs, n=1, cutoff=0.1)
+                if len(closest_str) > 0:
+                    closest_str = closest_str[0]
+                else:
+                    closest_str = input_str
+                for i in range(m_len):
+                    #if closest_str[i] != '-':
+                    t = torch.Tensor([inv_dict[closest_str[i]]]).long()
+                    hot = nn.functional.one_hot(t, num_classes=23)
+                    prediction[:, i] = hot
+                    if anchor_str[i] != closest_str[i]:
+                        position_prediction[:, i] = torch.tensor([0,1])      
+            
+            if strat == 'ancestor':    # use the closest sequence and the human to get a proxy of the ancestral sequence 
+                closest_str = get_close_matches(anchor_str, msa_seqs, n=2, cutoff=0.1)
+                human_str = input_str
+                
+                if len(closest_str) > 0 and closest_str[0] != anchor_str:
+                    closest_str = closest_str[0]
+                elif len(closest_str) > 1 and closest_str[0] == anchor_str:
+                    closest_str = closest_str[1]
+                else:
+                    closest_str = human_str
+                    print('copying human')
+                for i in range(m_len):
+                    t = torch.Tensor([inv_dict[closest_str[i]]]).long()
+                    if closest_str[i]!=anchor_str[i] and closest_str[i]!=human_str[i]:
+                        t = torch.Tensor([inv_dict[anchor_str[i]]]).long()
+                    #t = torch.Tensor([inv_dict[closest_str[i]]]).long()
+                    hot = nn.functional.one_hot(t, num_classes=23)
+                    prediction[:, i] = hot
+                    if anchor_str[i] != closest_str[i]:
+                        position_prediction[:, i] = torch.tensor([0,1])
+
+            if strat == 'maj':    # for each position we predict the most abundant one if it's not an indel
+                for i in range(m_len):
+                    if maj_aa[i] != '-':
+                        t = torch.Tensor([inv_dict[maj_aa[i]]]).long()
+                        hot = nn.functional.one_hot(t, num_classes=23)
+                        prediction[:, i] = hot
+                        if anchor_str[i] != maj_aa[i]:
+                            position_prediction[:, i] = torch.tensor([0,1])
+    
+            if strat == 'most_subst':    # we predit a substitution for the most changing positions (positions with most aa different than anchor). If so, we choose the most abundant substitution at this position
+                #subst_thresh = 0.1 #proxy_subst_rate #0.1
+                subst_thresh = proxy_subst_rate
+                for i in range(m_len_no_indels):
+                    if i < int(m_len_no_indels*subst_thresh):
+                        t = torch.Tensor([inv_dict[maj_substs_s[i]]]).long()
+                        hot = nn.functional.one_hot(t, num_classes=23)
+                        prediction[:, indexes_s[i]] = hot
+                        position_prediction[:, indexes_s[i]] = torch.tensor([0,1])
+        
+        prediction_merged = torch.cat((position_prediction.float(), prediction.float()), -1)
+        prediction_merged.requires_grad = True
+        return prediction_merged
+
+
+
+
+class SimplestHeadModuleFC(nn.Module):
+    """
+    Notre tête de réseau qui remplace le structure module, avec simplement des couches fully-connected
+    """
+    
+    def __init__(self, c_m, transition_n, msa_dim, intern_dim):
+        super(SimplestHeadModuleFC, self).__init__()
+        self.c_m = c_m
+        self.n = transition_n
+        self.msa_dim = msa_dim+1
+        self.intern_dim = intern_dim
+
+        # Quelques couches simples pour commencer
+        self.layer_norm = LayerNorm(self.n * self.c_m)
+        self.linear_1 = Linear(self.c_m, self.n * self.c_m, init="relu")
+        #self.activ = nn.ReLU()
+        self.activ = nn.GELU()
+        self.linear_2 = Linear(self.n * self.c_m, self.n * self.c_m, init="relu")
+        self.linear_3 = Linear(self.n * self.c_m, self.c_m, init="relu")
+        self.linear_4 = Linear(self.msa_dim, self.intern_dim, init="relu")
+        self.linear_5 = Linear(self.intern_dim, 1, init="relu")
+        self.linear_6 = Linear(self.c_m, 25, init="relu")
+
+        
+    def _head(self, m, a, msa, subst):
+        # m size is 1 x nb_msa x len x channels
+        # TODO : for loop on a dimension to have only independant positions
+
+        m_final = torch.zeros((1, m.size()[2], 25))
+        m_final = m_final.to(msa.device)
+        
+        for i in range(m.size()[2]):
+            sub_m = m[:,:,i,:]
+            subst_tensor = torch.zeros((1, 1, m.size()[3]))
+            subst_tensor = subst_tensor.to(msa.device)
+            if subst != None:
+                subst_tensor[:,:,0] = subst[:,i]
+            sub_m = torch.cat((sub_m, subst_tensor), dim=1)
+            # m is size 1 x nb_msa x channels
+
+            #sub_m = self.layer_norm(sub_m)
+            sub_m = self.linear_1(sub_m)
+            sub_m = self.activ(sub_m)
+            sub_m = self.layer_norm(sub_m)
+            sub_m = self.linear_2(sub_m)
+            sub_m = self.activ(sub_m)
+            sub_m = self.layer_norm(sub_m)
+            sub_m = self.linear_3(sub_m)
+            # Shape is currently [1, MSA_dim, channels]
+            #n_seq, n_res, c_in = m.shape[-3:]
+    
+            sub_m = sub_m.transpose(-1, -2)    # swap channels and MSA_dim to reduce to 1 predicted sequence
+            # Shape is now [1, channels, MSA_dim]
+            sub_m = self.linear_4(sub_m)
+            sub_m = self.activ(sub_m)
+            sub_m = self.linear_5(sub_m)
+            sub_m = self.activ(sub_m)
+            # Shape is now [1, channels, 1]
+            sub_m = sub_m.transpose(-1, -2)
+            sub_m = self.linear_6(sub_m)
+            sub_m = sub_m[0]
+
+            m_final[:,i,:] = sub_m
+        
+        # m is of size 25: 2 for the substitution mask and 23 for the aa distribution
+        return m_final
+        
+    def forward(self, m: torch.Tensor, a: torch.Tensor, msa: torch.Tensor, subst: torch.Tensor) -> torch.Tensor:
+        m = self._head(m, a, msa, subst)
+        return m
+
