@@ -1,0 +1,3 @@
+- DATA is the folder containing the data to be used by the neural networks, split into train and eval sets
+- DATA_BPPANCESTOR is the folder used to build A1 reconstruction using bppAncestor
+- DATA_mmseqs if the folder used to build clusters from A1 to split correctly the data

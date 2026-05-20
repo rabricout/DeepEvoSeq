@@ -1,0 +1,2 @@
+Here we got data and ancestral reconstruction as individual fasta files. 
+In the CLUSTERING_DATA folder, there are scripts to cluster data using mmseqs to group together similar sequences and perform a more relevant train/test split.

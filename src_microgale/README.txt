@@ -1,0 +1,2 @@
+- split_data_aplo.py and split_data_microgale.py are scripts to build train and eval datasets based on mmseqs clusters
+- 
